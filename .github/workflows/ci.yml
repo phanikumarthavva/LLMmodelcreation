@@ -35,7 +35,38 @@ jobs:
       - name: Build Docker image
         run: docker build -t llm-api .
 
-  security:
+  ai-security:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    env:
+      MODEL_ID: distilgpt2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-ai-security.txt
+
+      - name: ModelScan + PickleScan
+        run: python scripts/ai_security_scan.py
+
+      - name: Generate AIBOM (OWASP CycloneDX)
+        run: bash scripts/generate_aibom.sh
+
+      - name: Upload AI security reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-security-reports
+          path: reports/
+          if-no-files-found: error
+
+  app-security:
     runs-on: ubuntu-latest
     needs: lint-and-test
     steps:

@@ -93,7 +93,7 @@ Replace `YOUR_USERNAME` with your GitHub username.
 
 | Workflow | When it runs | What it does |
 |----------|--------------|--------------|
-| **CI** | Every push/PR to `main` | Lint → test → Docker build → security scans |
+| **CI** | Every push/PR to `main` | Lint → test → Docker build → **AI model security** → app security |
 | **CD** | After CI succeeds on `main` | Build image → push to GHCR |
 
 ### Step 4 — View your published Docker image
@@ -113,10 +113,12 @@ flowchart LR
   push[git_push_to_main] --> ci[CI_workflow]
   ci --> lint[lint_and_test]
   ci --> docker[docker_build]
-  ci --> sec[security_scans]
+  ci --> aiSec[ai_security]
+  ci --> appSec[app_security]
   lint --> cd[CD_workflow]
   docker --> cd
-  sec --> cd
+  aiSec --> cd
+  appSec --> cd
   cd --> ghcr[Push_to_GHCR]
 ```
 
@@ -127,7 +129,8 @@ Push this repo to GitHub. The workflow in [`.github/workflows/ci.yml`](.github/w
 1. **Lint** — `ruff check`
 2. **Test** — `pytest` (model is mocked in tests)
 3. **Docker build** — verifies the image builds
-4. **Security** — `pip-audit`, `gitleaks`, and `trivy` container scan
+4. **AI model security** — ModelScan, PickleScan, OWASP AIBOM (see below)
+5. **App security** — `pip-audit`, `gitleaks`, and `trivy` container scan
 
 Run tests locally:
 
@@ -193,9 +196,41 @@ docker pull ghcr.io/YOUR_USERNAME/llmmodelcreation:latest
 docker run -p 8000:8000 ghcr.io/YOUR_USERNAME/llmmodelcreation:latest
 ```
 
-## Phase 6 — DevSecOps (included in CI)
+## AI model security (DevSecOps for ML)
 
-The `security` job in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) already runs:
+The `ai-security` job scans the **Hugging Face model** your app uses (`distilgpt2` from [`app/model.py`](app/model.py)), not just the Python application.
+
+| Tool | What it checks | Why it matters |
+|------|----------------|----------------|
+| **ModelScan** | Pickle, H5, SavedModel files for unsafe code | Detects model serialization attacks before deploy |
+| **PickleScan** | Python pickle opcodes in model weights | `distilgpt2` uses PyTorch pickle format — common attack vector |
+| **OWASP AIBOM Generator** | Model metadata → CycloneDX JSON | AI Bill of Materials: provenance, lineage, compliance |
+
+Reports are uploaded as CI artifacts (`ai-security-reports`).
+
+### Run AI scans locally
+
+```powershell
+cd c:\Users\149836\LLMmodelcreation
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt -r requirements-ai-security.txt
+
+# ModelScan + PickleScan
+python scripts/ai_security_scan.py
+
+# AIBOM (requires Git Bash or WSL on Windows)
+bash scripts/generate_aibom.sh
+```
+
+Output lands in `reports/`:
+- `modelscan.json` — serialization scan results
+- `aibom-distilgpt2.json` — CycloneDX AIBOM
+
+If you change the model in `app/model.py`, CI automatically scans the new model ID.
+
+## Phase 6 — App security (included in CI)
+
+The `app-security` job in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs:
 
 | Scan | Tool | Purpose |
 |------|------|---------|
@@ -215,11 +250,16 @@ After a Kaggle fine-tune experiment, push weights to Hugging Face Hub and change
 app/
   main.py       # FastAPI routes
   model.py      # Hugging Face model loading
+scripts/
+  ai_security_scan.py   # ModelScan + PickleScan
+  generate_aibom.sh     # OWASP AIBOM (CycloneDX)
 tests/
   test_api.py   # API smoke tests (mocked model)
 Dockerfile
 requirements.txt
+requirements-ai-security.txt
 .github/workflows/ci.yml
+.github/workflows/cd.yml
 ```
 
 ## Learning path summary
@@ -231,4 +271,5 @@ requirements.txt
 | 3 | CI | Green GitHub Actions check |
 | 4 | CD | Image in GHCR |
 | 5 | Cloud deploy | Public URL responds |
-| 6 | DevSecOps | Security job passes in CI |
+| 6 | App DevSecOps | pip-audit, gitleaks, trivy pass |
+| 7 | AI DevSecOps | ModelScan, PickleScan, AIBOM in CI |
